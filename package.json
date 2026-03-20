@@ -1,0 +1,25 @@
+{
+  "name": "silocargo-webservice-tms",
+  "version": "1.0.0",
+  "description": "Integración SILOCARGO / Webservice TMS — scraping y sincronización de solicitudes DSV",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "start": "node dist/index.js",
+    "build": "tsc"
+  },
+  "dependencies": {
+    "axios": "^1.7.0",
+    "cors": "^2.8.5",
+    "express": "^4.19.2",
+    "puppeteer-core": "^22.0.0"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.4.0"
+  }
+}

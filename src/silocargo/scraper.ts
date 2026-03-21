@@ -494,8 +494,212 @@ export class SilocargoScraper {
       }
     }
 
-    console.log(`[SILOCARGO] Total solicitudes extraídas (${pagesNavigated} páginas): ${allSolicitudes.length}`);
+    console.log(`[SILOCARGO] Total solicitudes extraídas (${pagesNavigated} páginas, Buscar): ${allSolicitudes.length}`);
+
+    // ── Segunda fuente: ConfirmarSolicitudDsv ─────────────────────────────────
+    // Solicitudes nuevas pendientes de aceptación. No aparecen en Buscar_107
+    // porque aún no han pasado por el flujo de confirmación.
+    try {
+      const confirmarSols = await this.fetchConfirmarSolicitudes();
+      let confirmarNuevas = 0;
+      for (const s of confirmarSols) {
+        if (!allIds.has(s.id)) {
+          allSolicitudes.push(s);
+          allIds.add(s.id);
+          confirmarNuevas++;
+        }
+      }
+      console.log(`[SILOCARGO] ConfirmarSolicitudDsv: ${confirmarSols.length} total, ${confirmarNuevas} nuevas fusionadas`);
+    } catch (confirmarErr: unknown) {
+      const msg = confirmarErr instanceof Error ? confirmarErr.message : String(confirmarErr);
+      console.warn(`[SILOCARGO] Error al obtener ConfirmarSolicitudDsv: ${msg}`);
+    }
+
+    console.log(`[SILOCARGO] Total solicitudes extraídas (${pagesNavigated} páginas + confirmar): ${allSolicitudes.length}`);
     return allSolicitudes;
+  }
+
+  /**
+   * Navega a ConfirmarSolicitudDsv y extrae solicitudes pendientes de aceptación.
+   * La página muestra un formulario pre-llenado con la transportadora; hay que
+   * hacer clic en "Buscar" para obtener los resultados.
+   */
+  private async fetchConfirmarSolicitudes(): Promise<Solicitud[]> {
+    const confirmarUrl = `${BASE_URL}/index.php?page=Despacho.Transportadora.ConfirmarSolicitudDsv`;
+
+    // Paso 1: Cargar el formulario de búsqueda
+    const getResp = await this.http.get(confirmarUrl, { maxRedirects: 5 });
+    const formHtml = typeof getResp.data === "string" ? getResp.data : "";
+    const formUrl: string = getResp.request?.res?.responseUrl || confirmarUrl;
+
+    console.log(`[SILOCARGO Confirmar] Formulario cargado: ${formHtml.length} chars, url=${formUrl}`);
+    if (formUrl.toLowerCase().includes("login") || formHtml.length < 1000) {
+      console.warn("[SILOCARGO Confirmar] No se pudo acceder a ConfirmarSolicitudDsv");
+      return [];
+    }
+
+    // Paso 2: Extraer campos del formulario y enviar "Buscar"
+    const $form = cheerio.load(formHtml);
+    const formData: Record<string, string> = {};
+    $form("#ctl0_MainModule_ctl0 input, #ctl0_MainModule_ctl0 select, #ctl0_MainModule_ctl0 textarea").each((_, el) => {
+      const name = $form(el).attr("name");
+      const type = $form(el).attr("type") || "text";
+      if (!name || type === "submit" || type === "image") return;
+      const tagName = (el as any).tagName?.toLowerCase();
+      if (tagName === "select") {
+        formData[name] = $form(el).find("option[selected]").attr("value") || $form(el).find("option").first().attr("value") || "";
+      } else {
+        formData[name] = $form(el).attr("value") || "";
+      }
+    });
+
+    // Simular clic en botón "Buscar"
+    formData["ctl0$MainModule$buscar"] = "Buscar";
+    formData["ctl0$MainModule$IDLockHidden_ctl0_MainModule_buscar"] = "true";
+    formData["PRADO_POSTBACK_TARGET"] = "ctl0$MainModule$buscar";
+    formData["PRADO_POSTBACK_PARAMETER"] = "";
+
+    // Asegurar que tipsol_codigo tenga el valor correcto (DSV TRANSPORTADORA)
+    const tipsolKey = "ctl0$MainModule$tipsol_codigo";
+    if (!formData[tipsolKey]) {
+      formData[tipsolKey] = "4"; // DSV TRANSPORTADORA
+    }
+
+    const formAction = $form("#ctl0_MainModule_ctl0").attr("action") || confirmarUrl;
+    const postUrl = formAction.startsWith("http") ? formAction : `${BASE_URL}${formAction.startsWith("/") ? "" : "/"}${formAction}`;
+
+    console.log(`[SILOCARGO Confirmar] Enviando búsqueda a ${postUrl}`);
+    const { html: resultHtml, responseUrl: resultUrl } = await this.postForm(postUrl, formData, formUrl);
+    console.log(`[SILOCARGO Confirmar] Resultado: ${resultHtml.length} chars, url=${resultUrl}`);
+    fs.writeFileSync("/tmp/silocargo_confirmar.html", resultHtml, "utf8");
+
+    if (resultUrl.toLowerCase().includes("login")) {
+      console.warn("[SILOCARGO Confirmar] Sesión expirada en ConfirmarSolicitudDsv");
+      return [];
+    }
+
+    return this.extractConfirmarSolicitudes(resultHtml);
+  }
+
+  /**
+   * Parser especializado para ConfirmarSolicitudDsv.
+   *
+   * La tabla tiene esta estructura:
+   *   <tr><th>No</th><th>Solicitud</th><th>OrigenDestino</th>...</tr>   ← header
+   *   <tr><th>No. Ent.</th><th>Destinatario</th>...</tr>               ← sub-header
+   *   <tr><td>1</td><td>0202075567</td><td>BOGOTA(...)-CARTAGENA</td>... ← main row
+   *   <tr>...</tr>  ← sub-rows de detalle (delivery points, containers, etc.)
+   *   <tr><td>2</td><td>0202075569</td>...                              ← siguiente solicitud
+   *
+   * Los rows principales se identifican porque cell[1] contiene un ID numérico
+   * del patrón 0XXXXXXXXXXX (10-12 dígitos, ej. 0202075567).
+   */
+  private extractConfirmarSolicitudes(html: string): Solicitud[] {
+    const transportadora = process.env.SILOCARGO_TRANSPORTADORA || "TRANSPORTES SARVI LTDA";
+    const $ = cheerio.load(html);
+    const solicitudes: Solicitud[] = [];
+    const seen = new Set<string>();
+
+    // Encontrar la tabla con encabezado "No Solicitud OrigenDestino"
+    let $targetTable: ReturnType<typeof $> | null = null;
+    $("table").each((_i, tbl) => {
+      const headerText = $(tbl).find("tr").first().text().replace(/\s+/g, " ");
+      if (/no\s+solicitud\s+origen/i.test(headerText)) {
+        $targetTable = $(tbl);
+        return false; // break
+      }
+    });
+
+    if (!$targetTable) {
+      // Fallback: buscar en cualquier tabla que tenga "solicitud" en encabezados
+      $("table").each((_i, tbl) => {
+        const text = $(tbl).find("th").text();
+        if (/solicitud/i.test(text) && !$targetTable) {
+          $targetTable = $(tbl);
+        }
+      });
+    }
+
+    if (!$targetTable) {
+      console.warn("[SILOCARGO Confirmar] No se encontró la tabla de solicitudes en ConfirmarSolicitudDsv");
+      return [];
+    }
+
+    // Determinar índice de columna "Solicitud" desde los <th>
+    let solColIdx = 1; // default: segunda columna
+    ($targetTable as ReturnType<typeof $>).find("tr").first().find("th, td").each((idx, th) => {
+      if (/^solicitud$/i.test($(th).text().trim())) {
+        solColIdx = idx;
+        return false;
+      }
+    });
+
+    // Recorrer todos los <tr> y extraer solo los rows principales
+    ($targetTable as ReturnType<typeof $>).find("tr").each((_rIdx, row) => {
+      const $tds = $(row).find("td");
+      if ($tds.length < 3) return; // skip header rows (have <th>) and very short rows
+
+      // La columna "Solicitud" debe contener el ID numérico
+      const solCell = $tds.eq(solColIdx).text().trim();
+      const idMatch = solCell.match(/^(0\d{9,11})$/);
+      if (!idMatch) return; // sub-row de detalle o header
+      const solicitudId = idMatch[1];
+      if (seen.has(solicitudId)) return;
+      seen.add(solicitudId);
+
+      // Extraer origen/destino (columna 2: "BOGOTA(CUNDINAMARCA)-CARTAGENA")
+      const origenDestino = $tds.eq(solColIdx + 1).text().replace(/\s+/g, " ").trim();
+      const odParts = origenDestino.split(/\s*-\s*/);
+      const origen = odParts[0]?.trim() || "";
+      const destino = odParts[1]?.trim() || "";
+
+      // Cliente (columna 3)
+      const cliente = $tds.eq(solColIdx + 2).text().replace(/\s+/g, " ").trim();
+
+      // Fecha cargue (columna 6: "Fechade_Cargue")
+      const fechaCargue = $tds.eq(solColIdx + 5).text().replace(/\s+/g, " ").trim();
+
+      solicitudes.push({
+        id: solicitudId,
+        fecha: fechaCargue,
+        origen,
+        destino,
+        estado: "SIN GESTIONAR",
+        producto: "",
+        cantidad: "",
+        vehiculo: cliente,
+        observaciones: "",
+        transportadora,
+        transportadoraCodigo: "",
+        rawData: {
+          _source: "ConfirmarSolicitudDsv",
+          "origen destino": origenDestino,
+          "cliente": cliente,
+          "fecha_cargue": fechaCargue,
+        },
+      });
+    });
+
+    console.log(`[SILOCARGO Confirmar] Solicitudes pendientes extraídas: ${solicitudes.length}`);
+    return solicitudes;
+  }
+
+  private buildConfirmarSolicitud(id: string, trText: string, transportadora: string): Solicitud {
+    const origenMatch = trText.match(/([A-ZÁÉÍÓÚ][A-ZÁÉÍÓÚa-záéíóú\s]+)\s*\(([A-ZÁÉÍÓÚ][A-Za-záéíóúÁÉÍÓÚ\s]+)\)/);
+    return {
+      id,
+      fecha: "",
+      origen: origenMatch ? `${origenMatch[1].trim()} (${origenMatch[2].trim()})` : "",
+      destino: "",
+      estado: "SIN GESTIONAR",
+      producto: "",
+      cantidad: "",
+      vehiculo: "",
+      observaciones: "",
+      transportadora: transportadora || process.env.SILOCARGO_TRANSPORTADORA || "TRANSPORTES SARVI LTDA",
+      transportadoraCodigo: "",
+      rawData: { _source: "ConfirmarSolicitudDsv", _rowText: trText.substring(0, 300) },
+    };
   }
 
   /**

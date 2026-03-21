@@ -35,6 +35,8 @@ export async function forwardSolicitud(solicitud: Solicitud): Promise<boolean> {
         cantidad: solicitud.cantidad,
         vehiculo: solicitud.vehiculo,
         observaciones: solicitud.observaciones,
+        transportadora: solicitud.transportadora,
+        transportadoraCodigo: solicitud.transportadoraCodigo,
         rawData: solicitud.rawData,
         source: "silocargo",
         syncTimestamp: new Date().toISOString(),

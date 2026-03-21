@@ -1,25 +1,33 @@
 {
-  "name": "silocargo-webservice-tms",
-  "version": "1.0.0",
-  "description": "Integración SILOCARGO / Webservice TMS — scraping y sincronización de solicitudes DSV",
+  "name": "@workspace/api-server",
+  "version": "0.0.0",
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "tsx src/index.ts",
-    "start": "node dist/index.js",
-    "build": "tsc"
+    "dev": "NODE_ENV=development tsx ./src/index.ts",
+    "build": "tsx ./build.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "axios": "^1.7.0",
-    "cors": "^2.8.5",
-    "express": "^4.19.2",
-    "puppeteer-core": "^22.0.0"
+    "@workspace/api-zod": "workspace:*",
+    "@workspace/db": "workspace:*",
+    "axios": "^1.13.6",
+    "cheerio": "^1.2.0",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2",
+    "drizzle-orm": "catalog:",
+    "express": "^5",
+    "pino": "^9",
+    "pino-http": "^10",
+    "puppeteer-core": "^24.40.0"
   },
   "devDependencies": {
-    "@types/cors": "^2.8.17",
-    "@types/express": "^4.17.21",
-    "@types/node": "^20.0.0",
-    "tsx": "^4.19.0",
-    "typescript": "^5.4.0"
+    "@types/cookie-parser": "^1.4.10",
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/node": "catalog:",
+    "esbuild": "^0.27.3",
+    "pino-pretty": "^13",
+    "tsx": "catalog:"
   }
 }

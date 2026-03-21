@@ -428,12 +428,17 @@ export class SilocargoScraper {
     let pagesNavigated = 1; // ya contamos la página 1
     const visitedPostbacks = new Set<string>();
 
+    // Rastrear páginas absolutas ya visitadas (evita navegar atrás)
+    const visitedPageNums = new Set<number>([1]);
+
     while (pagesNavigated < MAX_PAGES) {
       const windowLinks = this.extractPageLinks(currentHtml);
       if (windowLinks.length === 0) break;
 
-      // Primer link no visitado: preferir numérico, luego ">"
-      const nextLink = windowLinks.find((l) => !visitedPostbacks.has(l.postbackId));
+      // Solo avanzar: tomar primer link numérico no visitado, o ">" si no hay numérico
+      const numericLinks = windowLinks.filter((l) => /^\d+$/.test(l.pageNum) && !visitedPostbacks.has(l.postbackId) && !visitedPageNums.has(Number(l.pageNum)));
+      const nextGroupLink = windowLinks.find((l) => l.pageNum === ">" && !visitedPostbacks.has(l.postbackId));
+      const nextLink = numericLinks[0] || nextGroupLink;
       if (!nextLink) break;
 
       visitedPostbacks.add(nextLink.postbackId);
@@ -475,6 +480,9 @@ export class SilocargoScraper {
           }
         }
         console.log(`[SILOCARGO] Página ${nextLink.pageNum}: ${pageSolicitudes.length} rows, ${newInPage} nuevas únicas (total: ${allSolicitudes.length})`);
+
+        // Registrar el número de página visitado para no navegar de vuelta
+        if (/^\d+$/.test(nextLink.pageNum)) visitedPageNums.add(Number(nextLink.pageNum));
 
         currentHtml = pageHtml;
         pagesNavigated++;

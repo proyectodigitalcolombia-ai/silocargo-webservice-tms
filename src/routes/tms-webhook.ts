@@ -354,7 +354,7 @@ router.get("/webhook/dashboard", (_req: Request, res: Response) => {
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>SafeNode: Silocargo ↔ Webservice TMS</title>
+  <title>SafeNode: Silocargo ↔ Webservice TMS DSV</title>
   <style>
     *{box-sizing:border-box;margin:0;padding:0}
     body{font-family:sans-serif;background:#f0f2f5;padding:20px}
@@ -429,7 +429,7 @@ router.get("/webhook/dashboard", (_req: Request, res: Response) => {
 <body>
   <div class="card">
     <button class="refresh-btn" onclick="location.reload()">↻ Actualizar</button>
-    <h2>SafeNode: Silocargo ↔ Webservice TMS</h2>
+    <h2>SafeNode: Silocargo ↔ Webservice TMS DSV</h2>
     <p class="subtitle">Solicitudes recibidas desde el portal DSV · Última actualización: ${new Date().toLocaleString("es-CO", { timeZone: "America/Bogota" })}</p>
 
     <div class="stats">

@@ -142,7 +142,7 @@ router.post("/webhook/solicitud", (req: Request, res: Response) => {
       transportadora: body.transportadora || "",
       transportadoraCodigo: body.transportadoraCodigo || "",
       rawData: body.rawData,
-      source: body.source || "silocargo",
+      source: body.source || (body.rawData as Record<string, string> | undefined)?._source || "Buscar_107",
       syncTimestamp: body.syncTimestamp || new Date().toISOString(),
       receivedAt: new Date().toISOString(),
     };
@@ -297,6 +297,9 @@ router.delete("/webhook/solicitudes", (_req: Request, res: Response) => {
 router.get("/webhook/dashboard", (_req: Request, res: Response) => {
   const aceptadas = solicitudesStore.filter((s) => s.aceptada).length;
   const terminadoRe = /finaliz|entregad|cancelad/i;
+  const cntVisor = solicitudesStore.filter((s) => s.source === "ConfirmarSolicitudDsv" || (s.rawData as Record<string, string> | undefined)?._source === "ConfirmarSolicitudDsv" || s.estado === "SIN GESTIONAR").length;
+  const cntSinGestionar = solicitudesStore.filter((s) => !s.aceptada && !terminadoRe.test(s.estado)).length;
+  const cntGestionadas = solicitudesStore.filter((s) => s.aceptada || terminadoRe.test(s.estado)).length;
 
   const rows = solicitudesStore
     .map((s) => {
@@ -328,9 +331,11 @@ router.get("/webhook/dashboard", (_req: Request, res: Response) => {
 
       // Una solicitud está "gestionada" si fue aceptada o su estado es terminal
       const gestionada = s.aceptada || terminadoRe.test(s.estado);
+      const rawSrc = (s.rawData as Record<string, string> | undefined)?._source;
+      const isVisor = s.source === "ConfirmarSolicitudDsv" || rawSrc === "ConfirmarSolicitudDsv" || s.estado === "SIN GESTIONAR";
 
       return `
-      <tr data-gestionada="${gestionada}">
+      <tr data-gestionada="${gestionada}" data-visor="${isVisor}">
         <td><strong>${escHtml(s.solicitudId)}</strong></td>
         <td>${escHtml(s.transportadora)}</td>
         <td>${escHtml(s.origen)}</td>
@@ -429,16 +434,22 @@ router.get("/webhook/dashboard", (_req: Request, res: Response) => {
 
     <div class="stats">
       <div class="stat"><strong class="badge">${solicitudesStore.length}</strong><span>Total solicitudes</span></div>
+      <div class="stat"><strong style="color:#e67e00">${cntVisor}</strong><span>Por confirmar (Visor)</span></div>
       <div class="stat"><strong style="color:#1e7e34">${aceptadas}</strong><span>Aceptadas</span></div>
       <div class="stat"><strong>${solicitudesStore.filter((s) => /finaliz/i.test(s.estado)).length}</strong><span>Finalizadas</span></div>
-      <div class="stat"><strong>${solicitudesStore.filter((s) => /pendiente/i.test(s.estado)).length}</strong><span>Pendientes</span></div>
-      <div class="stat"><strong id="stat-sin-gestionar">${solicitudesStore.filter((s) => !s.aceptada && !terminadoRe.test(s.estado)).length}</strong><span>Sin gestionar</span></div>
+      <div class="stat"><strong id="stat-sin-gestionar">${cntSinGestionar}</strong><span>Sin gestionar</span></div>
     </div>
 
     <div class="filter-bar">
       <span>Vista:</span>
-      <button class="filter-btn active" id="btn-sin-gestionar" onclick="setFiltro('sin-gestionar')">
-        Sin gestionar <span class="count-badge" id="cnt-sin-gestionar">${solicitudesStore.filter((s) => !s.aceptada && !terminadoRe.test(s.estado)).length}</span>
+      <button class="filter-btn active" id="btn-visor" onclick="setFiltro('visor')">
+        &#128065; Visor <span class="count-badge" id="cnt-visor">${cntVisor}</span>
+      </button>
+      <button class="filter-btn" id="btn-sin-gestionar" onclick="setFiltro('sin-gestionar')">
+        Sin gestionar <span class="count-badge" id="cnt-sin-gestionar">${cntSinGestionar}</span>
+      </button>
+      <button class="filter-btn" id="btn-gestionadas" onclick="setFiltro('gestionadas')">
+        Gestionadas <span class="count-badge" id="cnt-gestionadas">${cntGestionadas}</span>
       </button>
       <button class="filter-btn" id="btn-todas" onclick="setFiltro('todas')">
         Todas <span class="count-badge" id="cnt-todas">${solicitudesStore.length}</span>
@@ -601,25 +612,32 @@ router.get("/webhook/dashboard", (_req: Request, res: Response) => {
 
   <script>
     var currentSolicitudId = null;
-    var filtroActual = 'sin-gestionar';
+    var filtroActual = 'visor';
 
     function setFiltro(filtro) {
       filtroActual = filtro;
       var rows = document.querySelectorAll('#tabla-body tr[data-gestionada]');
       rows.forEach(function(tr) {
         var gestionada = tr.getAttribute('data-gestionada') === 'true';
-        if (filtro === 'sin-gestionar') {
-          tr.classList.toggle('row-hidden', gestionada);
-        } else {
-          tr.classList.remove('row-hidden');
+        var isVisor = tr.getAttribute('data-visor') === 'true';
+        var hidden = false;
+        if (filtro === 'visor') {
+          hidden = !isVisor;
+        } else if (filtro === 'sin-gestionar') {
+          hidden = gestionada;
+        } else if (filtro === 'gestionadas') {
+          hidden = !gestionada;
         }
+        tr.classList.toggle('row-hidden', hidden);
       });
-      document.getElementById('btn-sin-gestionar').classList.toggle('active', filtro === 'sin-gestionar');
-      document.getElementById('btn-todas').classList.toggle('active', filtro === 'todas');
+      ['visor','sin-gestionar','gestionadas','todas'].forEach(function(id) {
+        var btn = document.getElementById('btn-' + id);
+        if (btn) btn.classList.toggle('active', filtro === id);
+      });
     }
 
     document.addEventListener('DOMContentLoaded', function() {
-      setFiltro('sin-gestionar');
+      setFiltro('visor');
     });
 
     function openModal(jsonStr) {
